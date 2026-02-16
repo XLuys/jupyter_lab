@@ -1,85 +1,186 @@
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+import scipy.stats as stats
+import math
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import mean_squared_error as mse
+from scipy.stats import t
 
 
-def loss_function(w, b):
+eps = 0.01
+alpha = 0.1
+steps = 1000
+
+
+def var(y_orig, y_pred):
     cost = 0
-    for index, row in df.iterrows():
-        cost += ((w * row['study_hours_per_day'] + b - row['exam_score']) ** 2)
-    cost /= (2*df.shape[0])
+    cost += ((y_orig - y_pred) ** 2)
+    cost = cost.sum()
     return cost
 
 
-def gradient_descent_fast(X, y, w, b, alpha):
+def mse(y_orig, y_pred):
+    return var(y_orig, y_pred) / y_orig.shape[0]
+
+
+def R_sq(y_orig, y_pred):
+    n = len(y_orig)
+    return (y_orig.var()*(n-1) - var(y_orig, y_pred)) / (y_orig.var()*(n-1))
+
+
+
+
+
+def gradient_descent(X, y, w, b, alpha):
     n = len(X)
     y_pred = w * X + b
     error = y_pred - y
-    
+    # print(w, b)
     w_d = (1/n) * np.dot(X, error)
     b_d = (1/n) * np.sum(error)
 
     
     new_w = w - alpha * w_d
     new_b = b - alpha * b_d
-    
     return new_w, new_b
 
 
+def my_fit(X, y):
+    w, b = (0.04, 7)
+    std = X.std()
+    mean = X.mean()
+    X_scaled = (X - mean)/std
+
+    w_history = []
+    b_history = []
+    
+    for step in range(steps):
+        w_new, b_new = gradient_descent(X_scaled, y, w, b, alpha)
+        w_history.append(w_new)
+        b_history.append(b_new)
+        if abs(w_new - w) < eps and abs(b_new - b) < eps:
+            break
+        w, b = (w_new, b_new)
+
+    w_orig = w/std
+    b_orig = b - (w * mean)/std
+    
+    return (w_orig, b_orig, w_history, b_history)
+
+
+def SE_b(X, y, y_pred, df):
+    n = len(X)
+    res_var = var(y, y_pred) / (n - df)
+    print(math.sqrt(res_var))
+    squared_error = X.var() * (n-1)
+    mean = X.mean()
+    
+    
+    return math.sqrt(res_var * (1/n + (mean**2)/squared_error))
+
+def SE_w(X, y, y_pred, df):
+    n = len(X)
+    res_var = var(y, y_pred) / (n - df)
+    squared_error = X.var() * (n-1)
+
+    return math.sqrt(res_var / squared_error)
+
+
 df = pd.read_csv('advertising.csv')
-# df = df.sample(n=100, random_state = 1)
 
 
-df.head(1)
+fig, axs = plt.subplots(nrows=4, ncols=3, figsize=(15, 8))
+
+rows = ['Sales', 'TV', 'Radio', 'Newspaper']
+columns = ['TV', 'Radio', 'Newspaper']
 
 
-steps = 1000
-w, w_old = 0, 1
-b, b_old = 0, 1
-X = df['TV'].values
-X_scaled = (X - X.mean()) / X.std()
-y = df['Sales'].values
-eps = 0.01
-alpha = 0.1
+for i in range(len(rows)):
+    for j in range(len(columns)):
+        axs[i, j].set(xlabel=columns[j], ylabel=rows[i])
+        axs[i, j].scatter(x=df[columns[j]], y =df[rows[i]])
 
 
-for step in range(steps):
-    w_old, b_old = (w, b)
-    w, b = gradient_descent_fast(X_scaled, y, w, b, alpha)
-    if abs(w - w_old) < eps and abs(b - b_old) < eps:
-        break
-print("w: ", w)
-print("b: ", b)
-w_orig = w/X.std()
-b_orig = b - (w * X.mean())/X.std()
-pred_y = w_orig * X + b_orig
-fig, ax = plt.subplots(figsize=(8, 5))
+X = df['TV']
+y = df['Sales']
+
+w, b, w_hist, b_hist = my_fit(X, y)
+y_pred = w * X + b
 
 
-ax.scatter(x=X, y=df['Sales'].values, color='lightblue')
-ax.plot(X, pred_y, zorder=-1, color='red')
-
-
-fig, ax = plt.subplots(figsize = (8, 5))
-df_smaller = df.loc[
-    df['Radio'] < 22
-]
-df_bigger = df.loc[
-    df['Radio'] >= 22
-]
-df_smaller.plot.scatter(x='TV', y='Sales', color='lightgreen', ax = ax)
-df_bigger.plot.scatter(x='TV', y='Sales', color='salmon', ax = ax)
+fig, axs = plt.subplots(figsize=(20,5), nrows=1, ncols=2)
+axs[0].set(xlabel='TV', ylabel='Sales')
+axs[0].scatter(x=df['TV'], y=df['Sales'])
+axs[0].plot(X, y_pred, color='salmon')
 
 
 
+axs[1].plot(w_hist)
+axs[1].plot(b_hist)
 
 
-fig, ax = plt.subplots(figsize = (8, 5))
-df_smaller = df.loc[
-    df['Radio'] < 22
-]
-df_bigger = df.loc[
-    df['Radio'] >= 22
-]
-df_smaller.plot.scatter(x='TV', y='Sales', color='lightgreen', ax = ax)
-df_bigger.plot.scatter(x='TV', y='Sales', color='salmon', ax = ax)
+
+acc_df = pd.DataFrame(index=['w', 'b'], columns=['Coef', 'Std. error', 't-statistic', 'p-value'])
+
+
+acc_df.loc['w', 'Coef'] = w
+acc_df.loc['w', 'Std. error'] = SE_w(X, y, y_pred, 2)
+acc_df.loc['w', 't-statistic'] = w/acc_df.loc['w', 'Std. error']
+acc_df.loc['w', 'p-value'] = t.sf(acc_df.loc['w', 't-statistic'], len(X) - 2)
+
+acc_df.loc['b', 'Coef'] = b
+acc_df.loc['b', 'Std. error'] = SE_b(X, y, y_pred, 2)
+acc_df.loc['b', 't-statistic'] = b/acc_df.loc['b', 'Std. error']
+acc_df.loc['b', 'p-value'] = t.sf(acc_df.loc['b', 't-statistic'], len(X) - 2)
+
+
+acc_df
+
+
+
+
+
+X_orig = df['TV'].values
+X = [[i] for i in df['TV'].values]
+y = df['Sales']
+
+
+reg = LinearRegression().fit(X, y)
+
+
+w = reg.coef_
+b = reg.intercept_
+y_pred = w * X_orig + b 
+print(w[0], b)
+
+
+acc_df = pd.DataFrame(index=['w', 'b'], columns=['Coef', 'Std. error', 't-statistic', 'p-value'])
+acc_df.loc['w', 'Coef'] = w
+acc_df.loc['w', 'Std. error'] = SE_w(X_orig, y, y_pred, 2)
+acc_df.loc['w', 't-statistic'] = acc_df.loc['w', 'Coef']/acc_df.loc['w', 'Std. error']
+acc_df.loc['w', 'p-value'] = 2 * t.sf(np.abs(acc_df.loc['w', 't-statistic']), len(X) - 2)
+
+acc_df.loc['b', 'Coef'] = b
+acc_df.loc['b', 'Std. error'] = SE_b(X_orig, y, y_pred, 2)
+acc_df.loc['b', 't-statistic'] = acc_df.loc['b','Coef']/acc_df.loc['b', 'Std. error']
+acc_df.loc['b', 'p-value'] = 2 * t.sf(np.abs(acc_df.loc['b', 't-statistic']), len(X) - 2)
+
+
+quant_df = pd.DataFrame(columns=['Quantity', 'Value'])
+quant_df['Quantity'] = ['RSE', 'R^2']
+quant_df = quant_df.set_index('Quantity')
+
+
+
+quant_df.loc['R^2', 'Value'] = R_sq(y, y_pred)
+
+
+quant_df
+
+
+from sklearn.metrics import r2_score
+r2_score(y, y_pred)
+
+
+
